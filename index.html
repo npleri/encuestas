@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Encuesta al comercio &mdash; Relevamiento de campo</title>
+<link rel="icon" href="data:," />
+<style>
+  html, body, #root {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    background: #EEF2F6;
+  }
+  body { -webkit-font-smoothing: antialiased; }
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+<script crossorigin src="https://unpkg.com/recharts@2/umd/Recharts.js"></script>
+<script crossorigin src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+</head>
+<body>
+<div id="root">
+  <div style="padding:40px;text-align:center;font-family:system-ui,sans-serif;color:#5B6B84;">
+    Cargando encuesta&hellip;
+  </div>
+</div>
+
+<script type="text/babel" data-presets="react" data-type="module">
+const { useState, useEffect, useMemo, useCallback } = React;
+const {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, PieChart, Pie, Cell, LabelList
+} = Recharts;
+
+
+// ---------- Tokens ----------
+const C = {
+  paper: "#EEF2F6",
+  card: "#FFFFFF",
+  ink: "#16233A",
+  inkSoft: "#5B6B84",
+  line: "#CBD5E1",
+  lineSoft: "#E2E8F0",
+  primary: "#3454D1",
+  primarySoft: "#DCE4FB",
+  success: "#1F9D6F",
+  successSoft: "#DCF3E9",
+  warning: "#E0A83E",
+  warningSoft: "#FBEED9",
+  danger: "#E0563E",
+  dangerSoft: "#FBE1DB",
+};
+const FONT_HEAD = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
+const FONT_BODY = "system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+const MEDIOS = ["Presencial", "WhatsApp", "Teléfono", "Email", "Redes sociales"];
+const UTILIDAD_OPCIONES = ["Mucho", "Bastante", "Poco", "Nada"];
+const DONDE_OPCIONES = ["Computadora", "Celular", "Tablet", "Varios"];
+const MOTIVOS_NO_SOFTWARE = [
+  "No lo necesita", "No le interesa", "Es demasiado caro",
+  "Prefiere trabajar manualmente", "No conoce alternativas",
+  "No sabe cómo utilizarlo", "Otra",
+];
+const MOTIVOS_NO_IA = [
+  "No le interesa", "No la necesita", "No sabe cómo utilizarla",
+  "No conoce herramientas adecuadas", "Le genera desconfianza",
+  "Considera que es complicada", "Otra",
+];
+
+const CATEGORIA_FIJA = "Estudio contable";
+
+// ---------- Conexión a Google Sheets (base de datos) ----------
+// Pegá acá la URL de tu Web App de Google Apps Script (ver instrucciones adjuntas).
+const SHEETS_API_URL = "https://script.google.com/macros/s/AKfycby62cqC0rp_XMZgI4HuXajkJAAmJ8bflZCxhOi3F_qcc2gM7szlGO8K-TccgfN1iu8h/exec";
+// Campos que se guardan como texto separado por comas y hay que reconstruir como array al leer.
+const ARRAY_FIELDS = ["dondeUso", "motivosNoSoftware", "motivosNoIA"];
+
+const emptyForm = () => ({
+  fecha: new Date().toISOString().slice(0, 10),
+  categoria: CATEGORIA_FIJA,
+  localidad: "",
+  comercio: "",
+  persona: "",
+  medio: "",
+  respondio: "",
+  observaciones: "",
+  usaSoftware: "",
+  software: "",
+  tiempoUso: "",
+  dondeUso: [],
+  paraQueUso: "",
+  utilidadSoftware: "",
+  cuantoPaga: "",
+  necesitaPersonalizacion: "",
+  proveedorPersonaliza: "",
+  queCambiaria: "",
+  motivosNoSoftware: [],
+  otraSoftwareTexto: "",
+  usaIA: "",
+  herramientaIA: "",
+  paraQueIA: "",
+  utilidadIA: "",
+  otraTareaIA: "",
+  motivosNoIA: [],
+  otraIATexto: "",
+});
+
+const emptyFilters = () => ({
+  categoria: "", localidad: "", medio: "", respondio: "",
+  desde: "", hasta: "", q: "",
+});
+
+// ---------- Small UI helpers ----------
+function Field({ label, required, children, hint }) {
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <label style={{
+        display: "block", fontFamily: FONT_HEAD, fontSize: 11,
+        letterSpacing: "0.04em", textTransform: "uppercase",
+        color: C.inkSoft, marginBottom: 5,
+      }}>
+        {label}{required && <span style={{ color: C.danger }}> *</span>}
+      </label>
+      {children}
+      {hint && <div style={{ fontSize: 11, color: C.inkSoft, marginTop: 3 }}>{hint}</div>}
+    </div>
+  );
+}
+
+const inputStyle = {
+  width: "100%", padding: "8px 10px", borderRadius: 6,
+  border: `1px solid ${C.line}`, fontFamily: FONT_BODY, fontSize: 14,
+  color: C.ink, background: "#fff", outline: "none", boxSizing: "border-box",
+};
+
+function TextInput(props) {
+  return <input {...props} className={`stc-input ${props.className || ""}`} style={{ ...inputStyle, ...(props.style || {}) }} />;
+}
+function TextArea(props) {
+  return <textarea {...props} className={`stc-input ${props.className || ""}`} rows={props.rows || 2} style={{ ...inputStyle, resize: "vertical", ...(props.style || {}) }} />;
+}
+function Select({ value, onChange, options, placeholder }) {
+  return (
+    <select value={value} onChange={onChange} className="stc-input" style={{ ...inputStyle, background: "#fff" }}>
+      <option value="">{placeholder || "Seleccionar..."}</option>
+      {options.map((o) => <option key={o} value={o}>{o}</option>)}
+    </select>
+  );
+}
+
+function PillToggle({ value, onChange, options = ["Sí", "No"] }) {
+  return (
+    <div style={{ display: "flex", gap: 8 }}>
+      {options.map((o) => {
+        const active = value === o;
+        return (
+          <button
+            type="button" key={o} onClick={() => onChange(o)}
+            className="stc-btn stc-pill"
+            style={{
+              padding: "7px 16px", borderRadius: 999, cursor: "pointer",
+              border: `1px solid ${active ? C.primary : C.line}`,
+              background: active ? C.primary : "#fff",
+              color: active ? "#fff" : C.ink,
+              fontFamily: FONT_BODY, fontSize: 13, fontWeight: 600,
+            }}
+          >{o}</button>
+        );
+      })}
+    </div>
+  );
+}
+
+function CheckboxGroup({ options, values, onChange }) {
+  const toggle = (opt) => {
+    onChange(values.includes(opt) ? values.filter((v) => v !== opt) : [...values, opt]);
+  };
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+      {options.map((opt) => {
+        const active = values.includes(opt);
+        return (
+          <label key={opt} className="stc-chip" style={{
+            display: "flex", alignItems: "center", gap: 6, padding: "6px 10px",
+            borderRadius: 6, border: `1px solid ${active ? C.primary : C.lineSoft}`,
+            background: active ? C.primarySoft : "#fff", cursor: "pointer",
+            fontSize: 13, fontFamily: FONT_BODY, color: C.ink,
+          }}>
+            <input type="checkbox" checked={active} onChange={() => toggle(opt)} style={{ accentColor: C.primary }} />
+            {opt}
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
+function Badge({ children, tone = "ink" }) {
+  const map = {
+    success: [C.successSoft, C.success],
+    danger: [C.dangerSoft, C.danger],
+    warning: [C.warningSoft, C.warning],
+    ink: [C.lineSoft, C.inkSoft],
+    primary: [C.primarySoft, C.primary],
+  };
+  const [bg, fg] = map[tone];
+  return (
+    <span style={{
+      background: bg, color: fg, fontFamily: FONT_HEAD, fontSize: 11,
+      padding: "3px 8px", borderRadius: 999, fontWeight: 700, letterSpacing: "0.02em",
+      whiteSpace: "nowrap",
+    }}>{children}</span>
+  );
+}
+
+function SectionCard({ title, subtitle, children, badgeNum }) {
+  return (
+    <div className="stc-card" style={{
+      background: C.card, border: `1px solid ${C.lineSoft}`, borderRadius: 10,
+      padding: "20px 22px", marginBottom: 18, position: "relative",
+    }}>
+      <div style={{
+        position: "absolute", top: -9, left: 20, background: C.ink, color: "#fff",
+        fontFamily: FONT_HEAD, fontSize: 11, padding: "2px 10px", borderRadius: 999,
+      }}>{badgeNum}</div>
+      <div style={{ fontFamily: FONT_HEAD, fontSize: 15, fontWeight: 700, color: C.ink, marginTop: 4 }}>{title}</div>
+      {subtitle && <div style={{ fontSize: 12, color: C.inkSoft, marginBottom: 14, marginTop: 2 }}>{subtitle}</div>}
+      <div style={{ marginTop: 14 }}>{children}</div>
+    </div>
+  );
+}
+
+// ---------- Main App ----------
+function App() {
+  const [tab, setTab] = useState("form");
+  const [form, setForm] = useState(emptyForm());
+  const [records, setRecords] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState(null);
+  const [filters, setFilters] = useState(emptyFilters());
+  const [detail, setDetail] = useState(null);
+  const [errors, setErrors] = useState({});
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const configured = SHEETS_API_URL && !SHEETS_API_URL.startsWith("PEGA_AQUI");
+
+  const loadRecords = useCallback(async () => {
+    if (!configured) {
+      setLoading(false);
+      setMessage({ type: "error", text: "Falta configurar la conexión a Google Sheets (ver instrucciones)." });
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(`${SHEETS_API_URL}?t=${Date.now()}`);
+      if (!res.ok) throw new Error("bad response");
+      const raw = await res.json();
+      const clean = (Array.isArray(raw) ? raw : [])
+        .filter((r) => r && r.comercio)
+        .map((r) => {
+          const rec = { ...r };
+          ARRAY_FIELDS.forEach((f) => {
+            rec[f] = typeof rec[f] === "string" && rec[f]
+              ? rec[f].split(",").map((s) => s.trim()).filter(Boolean)
+              : (Array.isArray(rec[f]) ? rec[f] : []);
+          });
+          if (rec.fecha && typeof rec.fecha === "string" && rec.fecha.length > 10) {
+            rec.fecha = rec.fecha.slice(0, 10);
+          }
+          return rec;
+        })
+        .sort((a, b) => (b.fecha || "").localeCompare(a.fecha || "") || (b.createdAt || 0) - (a.createdAt || 0));
+      setRecords(clean);
+    } catch (e) {
+      setMessage({ type: "error", text: "No se pudieron cargar los datos. Probá refrescar." });
+    } finally {
+      setLoading(false);
+    }
+  }, [configured]);
+
+  useEffect(() => { loadRecords(); }, [loadRecords]);
+
+  const validate = () => {
+    const e = {};
+    if (!form.fecha) e.fecha = true;
+    if (!form.categoria.trim()) e.categoria = true;
+    if (!form.localidad.trim()) e.localidad = true;
+    if (!form.comercio.trim()) e.comercio = true;
+    if (!form.medio) e.medio = true;
+    if (!form.respondio) e.respondio = true;
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  };
+
+  const handleSave = async () => {
+    if (!configured) {
+      setMessage({ type: "error", text: "Falta configurar la conexión a Google Sheets (ver instrucciones)." });
+      return;
+    }
+    if (!validate()) {
+      setMessage({ type: "error", text: "Completá los campos obligatorios marcados con *." });
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    const id = `id_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const record = { ...form, id, createdAt: Date.now() };
+    try {
+      // text/plain evita el preflight CORS que Apps Script no siempre maneja bien.
+      const res = await fetch(SHEETS_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(record),
+      });
+      if (!res.ok) throw new Error("fail");
+      const data = await res.json();
+      if (!data || data.success !== true) throw new Error("fail");
+      setRecords((prev) => [record, ...prev]);
+      setForm(emptyForm());
+      setErrors({});
+      setMessage({ type: "success", text: "Encuesta guardada correctamente." });
+    } catch (e) {
+      setMessage({ type: "error", text: "Error al guardar. Verificá tu conexión y probá de nuevo." });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const categorias = useMemo(() => [...new Set(records.map((r) => r.categoria).filter(Boolean))].sort(), [records]);
+  const localidades = useMemo(() => [...new Set(records.map((r) => r.localidad).filter(Boolean))].sort(), [records]);
+  const comercios = useMemo(() => [...new Set(records.map((r) => r.comercio).filter(Boolean))].sort(), [records]);
+
+  const filtered = useMemo(() => {
+    return records.filter((r) => {
+      if (filters.categoria && r.categoria !== filters.categoria) return false;
+      if (filters.localidad && r.localidad !== filters.localidad) return false;
+      if (filters.medio && r.medio !== filters.medio) return false;
+      if (filters.respondio && r.respondio !== filters.respondio) return false;
+      if (filters.desde && r.fecha < filters.desde) return false;
+      if (filters.hasta && r.fecha > filters.hasta) return false;
+      if (filters.q) {
+        const q = filters.q.toLowerCase();
+        const hay = `${r.comercio} ${r.persona} ${r.observaciones}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [records, filters]);
+
+  const exportCSV = () => {
+    const cols = ["fecha", "categoria", "localidad", "comercio", "persona", "medio", "respondio", "observaciones"];
+    const header = ["Fecha", "Categoría", "Localidad", "Comercio", "Persona", "Medio", "Respondió", "Observaciones"];
+    const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const rows = filtered.map((r) => cols.map((c) => esc(r[c])).join(","));
+    const csv = [header.join(","), ...rows].join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "encuestas_comercios.csv";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div style={{ fontFamily: FONT_BODY, background: C.paper, minHeight: "100%", padding: "20px 16px 60px" }}>
+      <style>{`
+        @keyframes stcFadeInUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes stcFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes stcScaleIn { from { opacity: 0; transform: scale(0.97) translateY(4px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+        .stc-tabpanel { animation: stcFadeInUp 0.25s ease both; }
+        .stc-toast { animation: stcFadeInUp 0.25s ease both; }
+        .stc-card { animation: stcFadeInUp 0.3s ease both; transition: box-shadow 0.2s ease, transform 0.2s ease; }
+        .stc-card:hover { box-shadow: 0 4px 16px rgba(22,35,58,0.06); }
+        .stc-tab { transition: color 0.2s ease, background-color 0.2s ease; }
+        .stc-tab-dot { transition: background-color 0.2s ease, transform 0.2s ease; }
+        .stc-tab:hover .stc-tab-dot { transform: scale(1.3); }
+        .stc-btn { transition: transform 0.12s ease, box-shadow 0.15s ease, opacity 0.15s ease, background-color 0.15s ease; }
+        .stc-btn:hover { transform: translateY(-1px); }
+        .stc-btn:active { transform: translateY(0) scale(0.97); }
+        .stc-pill { transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.1s ease; }
+        .stc-pill:active { transform: scale(0.96); }
+        .stc-chip { transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.1s ease; }
+        .stc-chip:hover { transform: translateY(-1px); }
+        .stc-row { transition: background-color 0.15s ease; }
+        .stc-row:hover { background-color: ${C.paper}; }
+        .stc-input { transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+        .stc-input:focus { border-color: ${C.primary} !important; box-shadow: 0 0 0 3px ${C.primarySoft}; }
+        .stc-modal-backdrop { animation: stcFadeIn 0.2s ease both; }
+        .stc-modal-content { animation: stcScaleIn 0.22s ease both; }
+        .stc-link-btn { transition: color 0.15s ease, transform 0.1s ease; }
+        .stc-link-btn:hover { transform: translateX(2px); }
+        @media (prefers-reduced-motion: reduce) {
+          .stc-tabpanel, .stc-toast, .stc-card, .stc-modal-backdrop, .stc-modal-content { animation: none !important; }
+          .stc-btn, .stc-pill, .stc-chip, .stc-row, .stc-tab, .stc-tab-dot, .stc-input, .stc-link-btn { transition: none !important; }
+        }
+      `}</style>
+      <div style={{ maxWidth: 980, margin: "0 auto" }}>
+        <Header records={records} />
+        {!configured && (
+          <div style={{
+            marginBottom: 16, padding: "12px 16px", borderRadius: 8, fontSize: 13,
+            background: C.warningSoft, color: "#8a5a17", border: `1px solid ${C.warning}`, lineHeight: 1.5,
+          }}>
+            <b>Falta un paso de configuración:</b> todavía no está conectada la base de datos (Google Sheets).
+            Seguí las instrucciones del archivo <code>configuracion-google-sheets.md</code> y pegá la URL de tu Web App
+            en la constante <code>SHEETS_API_URL</code> al inicio del código.
+          </div>
+        )}
+        <Tabs tab={tab} setTab={setTab} />
+        {message && (
+          <div className="stc-toast" style={{
+            marginBottom: 14, padding: "10px 14px", borderRadius: 8, fontSize: 13,
+            background: message.type === "error" ? C.dangerSoft : C.successSoft,
+            color: message.type === "error" ? C.danger : C.success, fontWeight: 600,
+          }}>{message.text}</div>
+        )}
+
+        <div key={tab} className="stc-tabpanel">
+        {tab === "form" && (
+          <FormView
+            form={form} set={set} errors={errors} saving={saving} onSave={handleSave}
+            onClear={() => { setForm(emptyForm()); setErrors({}); setMessage(null); }}
+            comercios={comercios}
+          />
+        )}
+
+        {tab === "data" && (
+          <DataView
+            loading={loading} filtered={filtered} filters={filters} setFilters={setFilters}
+            categorias={categorias} localidades={localidades} onRefresh={loadRecords}
+            onExport={exportCSV} onOpen={setDetail} total={records.length}
+          />
+        )}
+
+        {tab === "analisis" && (
+          <AnalysisView filtered={filtered} loading={loading} />
+        )}
+        </div>
+      </div>
+      {detail && <DetailModal record={detail} onClose={() => setDetail(null)} />}
+    </div>
+  );
+}
+
+function Header({ records }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 18, flexWrap: "wrap", gap: 10 }}>
+      <div>
+        <div style={{ fontFamily: FONT_HEAD, fontSize: 11, letterSpacing: "0.12em", color: C.primary, textTransform: "uppercase", marginBottom: 4 }}>
+          Relevamiento de campo
+        </div>
+        <div style={{ fontFamily: FONT_HEAD, fontSize: 24, fontWeight: 700, color: C.ink }}>
+          Encuesta al comercio
+        </div>
+      </div>
+      <div style={{
+        fontFamily: FONT_HEAD, fontSize: 12, color: C.inkSoft, border: `1px dashed ${C.line}`,
+        borderRadius: 8, padding: "6px 12px",
+      }}>
+        Nº registros: <b style={{ color: C.ink }}>{String(records.length).padStart(4, "0")}</b>
+      </div>
+    </div>
+  );
+}
+
+function Tabs({ tab, setTab }) {
+  const items = [
+    { id: "form", label: "Nueva encuesta" },
+    { id: "data", label: "Datos" },
+    { id: "analisis", label: "Análisis" },
+  ];
+  return (
+    <div style={{ display: "flex", gap: 4, marginBottom: 18, borderBottom: `1px solid ${C.line}` }}>
+      {items.map((it) => {
+        const active = tab === it.id;
+        return (
+          <button
+            key={it.id} onClick={() => setTab(it.id)}
+            className="stc-tab"
+            style={{
+              position: "relative", padding: "10px 18px", cursor: "pointer",
+              background: active ? C.card : "transparent",
+              border: "none", borderTop: active ? `1px solid ${C.line}` : "1px solid transparent",
+              borderLeft: active ? `1px solid ${C.line}` : "1px solid transparent",
+              borderRight: active ? `1px solid ${C.line}` : "1px solid transparent",
+              borderRadius: "8px 8px 0 0", marginBottom: -1,
+              fontFamily: FONT_HEAD, fontSize: 12, letterSpacing: "0.03em", textTransform: "uppercase",
+              color: active ? C.primary : C.inkSoft, fontWeight: 700,
+            }}
+          >
+            <span className="stc-tab-dot" style={{
+              position: "absolute", top: 6, left: "50%", transform: "translateX(-50%)",
+              width: 4, height: 4, borderRadius: "50%", background: active ? C.primary : C.lineSoft,
+            }} />
+            {it.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------- Form View ----------
+function FormView({ form, set, errors, saving, onSave, onClear, comercios }) {
+  return (
+    <div>
+      <SectionCard badgeNum="01" title="Datos del comercio" subtitle="Información básica del contacto realizado.">
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "0 16px" }}>
+          <Field label="Fecha" required>
+            <TextInput type="date" value={form.fecha} onChange={(e) => set("fecha", e.target.value)} style={errors.fecha ? { borderColor: C.danger } : {}} />
+          </Field>
+          <Field label="Categoría">
+            <div style={{
+              display: "inline-flex", alignItems: "center", padding: "8px 12px",
+              borderRadius: 6, border: `1px solid ${C.lineSoft}`, background: C.primarySoft,
+              color: C.primary, fontWeight: 700, fontSize: 14,
+            }}>{CATEGORIA_FIJA}</div>
+          </Field>
+          <Field label="Localidad" required>
+            <TextInput value={form.localidad} onChange={(e) => set("localidad", e.target.value)} style={errors.localidad ? { borderColor: C.danger } : {}} />
+          </Field>
+          <Field label="Nombre del comercio" required hint={comercios.length ? "Empezá a escribir para ver comercios ya cargados." : undefined}>
+            <TextInput list="comercios-list" value={form.comercio} onChange={(e) => set("comercio", e.target.value)} style={errors.comercio ? { borderColor: C.danger } : {}} />
+            <datalist id="comercios-list">
+              {comercios.map((c) => <option key={c} value={c} />)}
+            </datalist>
+          </Field>
+          <Field label="Persona entrevistada">
+            <TextInput value={form.persona} onChange={(e) => set("persona", e.target.value)} />
+          </Field>
+          <Field label="Medio de contacto" required>
+            <Select value={form.medio} onChange={(e) => set("medio", e.target.value)} options={MEDIOS} placeholder="Elegir medio..." />
+            {errors.medio && <div style={{ fontSize: 11, color: C.danger, marginTop: 3 }}>Requerido</div>}
+          </Field>
+        </div>
+        <Field label="¿Respondió?" required>
+          <PillToggle value={form.respondio} onChange={(v) => set("respondio", v)} options={["Sí", "No"]} />
+          {errors.respondio && <div style={{ fontSize: 11, color: C.danger, marginTop: 3 }}>Requerido</div>}
+        </Field>
+        <Field label="Observaciones">
+          <TextArea value={form.observaciones} onChange={(e) => set("observaciones", e.target.value)} rows={3} />
+        </Field>
+      </SectionCard>
+
+      {form.respondio === "Sí" && (
+        <>
+          <SectionCard badgeNum="02" title="Software / sistema de gestión">
+            <Field label="¿Utilizan algún software o sistema para administrar el comercio?" required>
+              <PillToggle value={form.usaSoftware} onChange={(v) => set("usaSoftware", v)} />
+            </Field>
+
+            {form.usaSoftware === "Sí" && (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "0 16px" }}>
+                  <Field label="¿Qué software utilizan?">
+                    <TextInput value={form.software} onChange={(e) => set("software", e.target.value)} />
+                  </Field>
+                  <Field label="¿Desde hace cuánto tiempo?">
+                    <TextInput value={form.tiempoUso} onChange={(e) => set("tiempoUso", e.target.value)} placeholder="Ej: 2 años" />
+                  </Field>
+                </div>
+                <Field label="¿Dónde lo utilizan?">
+                  <CheckboxGroup options={DONDE_OPCIONES} values={form.dondeUso} onChange={(v) => set("dondeUso", v)} />
+                </Field>
+                <Field label="¿Para qué lo utilizan?">
+                  <TextArea value={form.paraQueUso} onChange={(e) => set("paraQueUso", e.target.value)} />
+                </Field>
+                <Field label="¿Consideran que es útil para el negocio?">
+                  <Select value={form.utilidadSoftware} onChange={(e) => set("utilidadSoftware", e.target.value)} options={UTILIDAD_OPCIONES} />
+                </Field>
+                <Field label="Aproximadamente, ¿cuánto pagan por el sistema?" hint="Opcional — el comercio puede preferir no responder.">
+                  <TextInput value={form.cuantoPaga} onChange={(e) => set("cuantoPaga", e.target.value)} />
+                </Field>
+                <Field label="¿Necesitarían personalizaciones o funciones específicas?">
+                  <PillToggle value={form.necesitaPersonalizacion} onChange={(v) => set("necesitaPersonalizacion", v)} />
+                </Field>
+                {form.necesitaPersonalizacion === "Sí" && (
+                  <Field label="¿El proveedor se las realiza?">
+                    <PillToggle value={form.proveedorPersonaliza} onChange={(v) => set("proveedorPersonaliza", v)} options={["Sí", "No", "No sabe"]} />
+                  </Field>
+                )}
+                <Field label="¿Qué cambiarían o mejorarían del sistema actual?">
+                  <TextArea value={form.queCambiaria} onChange={(e) => set("queCambiaria", e.target.value)} />
+                </Field>
+              </>
+            )}
+
+            {form.usaSoftware === "No" && (
+              <>
+                <Field label="¿Por qué no utiliza software?">
+                  <CheckboxGroup options={MOTIVOS_NO_SOFTWARE} values={form.motivosNoSoftware} onChange={(v) => set("motivosNoSoftware", v)} />
+                </Field>
+                {form.motivosNoSoftware.includes("Otra") && (
+                  <Field label="Especificar otra razón">
+                    <TextInput value={form.otraSoftwareTexto} onChange={(e) => set("otraSoftwareTexto", e.target.value)} />
+                  </Field>
+                )}
+              </>
+            )}
+          </SectionCard>
+
+          <SectionCard badgeNum="03" title="Inteligencia artificial">
+            <Field label="¿Utilizan Inteligencia Artificial en el comercio?" required>
+              <PillToggle value={form.usaIA} onChange={(v) => set("usaIA", v)} />
+            </Field>
+
+            {form.usaIA === "Sí" && (
+              <>
+                <Field label="¿Qué herramienta o tipo de IA utiliza?">
+                  <TextInput value={form.herramientaIA} onChange={(e) => set("herramientaIA", e.target.value)} />
+                </Field>
+                <Field label="¿Para qué la utiliza?">
+                  <TextArea value={form.paraQueIA} onChange={(e) => set("paraQueIA", e.target.value)} />
+                </Field>
+                <Field label="¿Considera que le resulta útil?">
+                  <Select value={form.utilidadIA} onChange={(e) => set("utilidadIA", e.target.value)} options={UTILIDAD_OPCIONES} />
+                </Field>
+                <Field label="¿Qué otra tarea le gustaría resolver o mejorar utilizando IA?">
+                  <TextArea value={form.otraTareaIA} onChange={(e) => set("otraTareaIA", e.target.value)} />
+                </Field>
+              </>
+            )}
+
+            {form.usaIA === "No" && (
+              <>
+                <Field label="¿Por qué no utiliza Inteligencia Artificial?">
+                  <CheckboxGroup options={MOTIVOS_NO_IA} values={form.motivosNoIA} onChange={(v) => set("motivosNoIA", v)} />
+                </Field>
+                {form.motivosNoIA.includes("Otra") && (
+                  <Field label="Especificar otra razón">
+                    <TextInput value={form.otraIATexto} onChange={(e) => set("otraIATexto", e.target.value)} />
+                  </Field>
+                )}
+              </>
+            )}
+          </SectionCard>
+        </>
+      )}
+
+      <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+        <button onClick={onClear} className="stc-btn" style={{
+          padding: "10px 18px", borderRadius: 8, border: `1px solid ${C.line}`,
+          background: "#fff", color: C.inkSoft, fontWeight: 600, cursor: "pointer", fontFamily: FONT_BODY,
+        }}>Limpiar</button>
+        <button onClick={onSave} disabled={saving} className="stc-btn" style={{
+          padding: "10px 22px", borderRadius: 8, border: "none",
+          background: C.primary, color: "#fff", fontWeight: 700, cursor: saving ? "default" : "pointer",
+          opacity: saving ? 0.7 : 1, fontFamily: FONT_BODY,
+        }}>{saving ? "Guardando..." : "Guardar encuesta"}</button>
+      </div>
+    </div>
+  );
+}
+
+// ---------- Data View ----------
+function DataView({ loading, filtered, filters, setFilters, categorias, localidades, onRefresh, onExport, onOpen, total }) {
+  const setF = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
+  return (
+    <div>
+      <SectionCard badgeNum="—" title="Filtros" subtitle={`Mostrando ${filtered.length} de ${total} registros.`}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: "0 16px" }}>
+          <Field label="Categoría"><Select value={filters.categoria} onChange={(e) => setF("categoria", e.target.value)} options={categorias} placeholder="Todas" /></Field>
+          <Field label="Localidad"><Select value={filters.localidad} onChange={(e) => setF("localidad", e.target.value)} options={localidades} placeholder="Todas" /></Field>
+          <Field label="Medio"><Select value={filters.medio} onChange={(e) => setF("medio", e.target.value)} options={MEDIOS} placeholder="Todos" /></Field>
+          <Field label="Respondió"><Select value={filters.respondio} onChange={(e) => setF("respondio", e.target.value)} options={["Sí", "No"]} placeholder="Todos" /></Field>
+          <Field label="Desde"><TextInput type="date" value={filters.desde} onChange={(e) => setF("desde", e.target.value)} /></Field>
+          <Field label="Hasta"><TextInput type="date" value={filters.hasta} onChange={(e) => setF("hasta", e.target.value)} /></Field>
+        </div>
+        <Field label="Buscar (comercio, persona, observaciones)">
+          <TextInput value={filters.q} onChange={(e) => setF("q", e.target.value)} placeholder="Escribí para buscar..." />
+        </Field>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={() => setFilters(emptyFilters())} className="stc-btn" style={{ padding: "8px 14px", borderRadius: 7, border: `1px solid ${C.line}`, background: "#fff", cursor: "pointer", fontSize: 13, fontFamily: FONT_BODY, color: C.inkSoft }}>Limpiar filtros</button>
+          <button onClick={onRefresh} className="stc-btn" style={{ padding: "8px 14px", borderRadius: 7, border: `1px solid ${C.line}`, background: "#fff", cursor: "pointer", fontSize: 13, fontFamily: FONT_BODY, color: C.inkSoft }}>Refrescar</button>
+          <button onClick={onExport} className="stc-btn" style={{ padding: "8px 14px", borderRadius: 7, border: "none", background: C.success, color: "#fff", cursor: "pointer", fontSize: 13, fontWeight: 700, fontFamily: FONT_BODY }}>Exportar CSV</button>
+        </div>
+      </SectionCard>
+
+      <div style={{ background: C.card, border: `1px solid ${C.lineSoft}`, borderRadius: 10, overflow: "hidden" }}>
+        {loading ? (
+          <div style={{ padding: 30, textAlign: "center", color: C.inkSoft }}>Cargando registros...</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ padding: 30, textAlign: "center", color: C.inkSoft }}>No hay registros que coincidan con los filtros.</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: C.paper, textAlign: "left" }}>
+                  {["Fecha", "Categoría", "Localidad", "Comercio", "Persona", "Medio", "Respondió", ""].map((h) => (
+                    <th key={h} style={{ padding: "10px 12px", fontFamily: FONT_HEAD, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.03em", color: C.inkSoft, borderBottom: `1px solid ${C.line}` }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((r) => (
+                  <tr key={r.id} className="stc-row" style={{ borderBottom: `1px solid ${C.lineSoft}` }}>
+                    <td style={{ padding: "9px 12px", color: C.ink, whiteSpace: "nowrap" }}>{r.fecha}</td>
+                    <td style={{ padding: "9px 12px", color: C.ink }}>{r.categoria}</td>
+                    <td style={{ padding: "9px 12px", color: C.ink }}>{r.localidad}</td>
+                    <td style={{ padding: "9px 12px", color: C.ink, fontWeight: 600 }}>{r.comercio}</td>
+                    <td style={{ padding: "9px 12px", color: C.inkSoft }}>{r.persona || "—"}</td>
+                    <td style={{ padding: "9px 12px" }}><Badge tone="primary">{r.medio}</Badge></td>
+                    <td style={{ padding: "9px 12px" }}>
+                      <Badge tone={r.respondio === "Sí" ? "success" : "danger"}>{r.respondio}</Badge>
+                    </td>
+                    <td style={{ padding: "9px 12px" }}>
+                      <button onClick={() => onOpen(r)} className="stc-link-btn" style={{ border: "none", background: "none", color: C.primary, cursor: "pointer", fontSize: 12, fontWeight: 700, display: "inline-block" }}>Ver ficha →</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DetailModal({ record, onClose }) {
+  const Row = ({ label, value }) => value ? (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ fontFamily: FONT_HEAD, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.03em", color: C.inkSoft }}>{label}</div>
+      <div style={{ fontSize: 14, color: C.ink }}>{Array.isArray(value) ? value.join(", ") : value}</div>
+    </div>
+  ) : null;
+  return (
+    <div onClick={onClose} className="stc-modal-backdrop" style={{ position: "fixed", inset: 0, background: "rgba(22,35,58,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16, zIndex: 50 }}>
+      <div onClick={(e) => e.stopPropagation()} className="stc-modal-content" style={{ background: "#fff", borderRadius: 12, maxWidth: 560, width: "100%", maxHeight: "85vh", overflowY: "auto", padding: 24 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+          <div>
+            <div style={{ fontFamily: FONT_HEAD, fontSize: 11, color: C.primary, textTransform: "uppercase" }}>Ficha de relevamiento</div>
+            <div style={{ fontFamily: FONT_HEAD, fontSize: 18, fontWeight: 700, color: C.ink }}>{record.comercio}</div>
+          </div>
+          <button onClick={onClose} className="stc-btn" style={{ border: "none", background: "none", cursor: "pointer", fontSize: 20, color: C.inkSoft }}>×</button>
+        </div>
+        <Row label="Fecha" value={record.fecha} />
+        <Row label="Categoría" value={record.categoria} />
+        <Row label="Localidad" value={record.localidad} />
+        <Row label="Persona entrevistada" value={record.persona} />
+        <Row label="Medio" value={record.medio} />
+        <Row label="Respondió" value={record.respondio} />
+        <Row label="Observaciones" value={record.observaciones} />
+        {record.respondio === "Sí" && (
+          <>
+            <hr style={{ margin: "14px 0", border: "none", borderTop: `1px solid ${C.lineSoft}` }} />
+            <div style={{ fontFamily: FONT_HEAD, fontSize: 12, color: C.primary, marginBottom: 8 }}>SOFTWARE</div>
+            <Row label="¿Usa software?" value={record.usaSoftware} />
+            {record.usaSoftware === "Sí" ? (
+              <>
+                <Row label="Software" value={record.software} />
+                <Row label="Tiempo de uso" value={record.tiempoUso} />
+                <Row label="Dónde lo usa" value={record.dondeUso} />
+                <Row label="Para qué lo usa" value={record.paraQueUso} />
+                <Row label="Utilidad" value={record.utilidadSoftware} />
+                <Row label="Cuánto paga" value={record.cuantoPaga} />
+                <Row label="Necesita personalización" value={record.necesitaPersonalizacion} />
+                <Row label="Proveedor personaliza" value={record.proveedorPersonaliza} />
+                <Row label="Qué cambiaría" value={record.queCambiaria} />
+              </>
+            ) : (
+              <>
+                <Row label="Motivos" value={record.motivosNoSoftware} />
+                <Row label="Otra razón" value={record.otraSoftwareTexto} />
+              </>
+            )}
+            <hr style={{ margin: "14px 0", border: "none", borderTop: `1px solid ${C.lineSoft}` }} />
+            <div style={{ fontFamily: FONT_HEAD, fontSize: 12, color: C.primary, marginBottom: 8 }}>INTELIGENCIA ARTIFICIAL</div>
+            <Row label="¿Usa IA?" value={record.usaIA} />
+            {record.usaIA === "Sí" ? (
+              <>
+                <Row label="Herramienta" value={record.herramientaIA} />
+                <Row label="Para qué la usa" value={record.paraQueIA} />
+                <Row label="Utilidad" value={record.utilidadIA} />
+                <Row label="Otra tarea deseada" value={record.otraTareaIA} />
+              </>
+            ) : (
+              <>
+                <Row label="Motivos" value={record.motivosNoIA} />
+                <Row label="Otra razón" value={record.otraIATexto} />
+              </>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Analysis View ----------
+const PIE_COLORS = [C.success, C.danger, C.warning, C.primary];
+
+function AnalysisView({ filtered, loading }) {
+  if (loading) return <div style={{ padding: 30, textAlign: "center", color: C.inkSoft }}>Cargando...</div>;
+  if (filtered.length === 0) return <div style={{ padding: 30, textAlign: "center", color: C.inkSoft, background: C.card, borderRadius: 10, border: `1px solid ${C.lineSoft}` }}>No hay datos para analizar todavía. Cargá encuestas o ajustá los filtros en la pestaña Datos.</div>;
+
+  const effData = MEDIOS.map((m) => {
+    const recs = filtered.filter((r) => r.medio === m);
+    const total = recs.length;
+    const respondieron = recs.filter((r) => r.respondio === "Sí").length;
+    return { medio: m, total, respondieron, no: total - respondieron, tasa: total ? Math.round((respondieron / total) * 100) : 0 };
+  }).filter((d) => d.total > 0).sort((a, b) => b.tasa - a.tasa);
+
+  const respondieronRecs = filtered.filter((r) => r.respondio === "Sí");
+  const softwarePie = ["Sí", "No"].map((v) => ({ name: v, value: respondieronRecs.filter((r) => r.usaSoftware === v).length }));
+  const iaPie = ["Sí", "No"].map((v) => ({ name: v, value: respondieronRecs.filter((r) => r.usaIA === v).length }));
+
+  return (
+    <div>
+      <SectionCard badgeNum="A" title="Efectividad por medio de contacto" subtitle="Tasa de respuesta (%) — ordenado de mayor a menor efectividad.">
+        <div style={{ width: "100%", height: Math.max(180, effData.length * 60) }}>
+          <ResponsiveContainer>
+            <BarChart data={effData} layout="vertical" margin={{ left: 20, right: 30 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.lineSoft} horizontal={false} />
+              <XAxis type="number" domain={[0, 100]} unit="%" tick={{ fontSize: 12, fill: C.inkSoft }} />
+              <YAxis type="category" dataKey="medio" tick={{ fontSize: 13, fill: C.ink }} width={110} />
+              <Tooltip formatter={(v) => `${v}%`} />
+              <Bar dataKey="tasa" fill={C.primary} radius={[0, 6, 6, 0]}>
+                <LabelList dataKey="tasa" position="right" formatter={(v) => `${v}%`} fill={C.ink} fontSize={12} />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </SectionCard>
+
+      <SectionCard badgeNum="B" title="Volumen de contactos por medio" subtitle="Total de comercios contactados vs. cuántos respondieron.">
+        <div style={{ width: "100%", height: Math.max(200, effData.length * 55) }}>
+          <ResponsiveContainer>
+            <BarChart data={effData}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.lineSoft} />
+              <XAxis dataKey="medio" tick={{ fontSize: 12, fill: C.inkSoft }} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 12, fill: C.inkSoft }} />
+              <Tooltip />
+              <Legend wrapperStyle={{ fontSize: 12 }} />
+              <Bar dataKey="respondieron" name="Respondió" fill={C.success} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="no" name="No respondió" fill={C.danger} radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </SectionCard>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16 }}>
+        <SectionCard badgeNum="C" title="Uso de software" subtitle={`Sobre ${respondieronRecs.length} comercios que respondieron.`}>
+          <MiniPie data={softwarePie} />
+        </SectionCard>
+        <SectionCard badgeNum="D" title="Uso de IA" subtitle={`Sobre ${respondieronRecs.length} comercios que respondieron.`}>
+          <MiniPie data={iaPie} />
+        </SectionCard>
+      </div>
+    </div>
+  );
+}
+
+function MiniPie({ data }) {
+  const hasData = data.some((d) => d.value > 0);
+  if (!hasData) return <div style={{ color: C.inkSoft, fontSize: 13, padding: "20px 0", textAlign: "center" }}>Sin datos suficientes.</div>;
+  return (
+    <div style={{ width: "100%", height: 220 }}>
+      <ResponsiveContainer>
+        <PieChart>
+          <Pie data={data} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={80} label={(d) => `${d.name}: ${d.value}`}>
+            {data.map((_, i) => <Cell key={i} fill={i === 0 ? C.success : C.danger} />)}
+          </Pie>
+          <Tooltip />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+        </PieChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+// ---------- Mount ----------
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App />);
+
+</script>
+</body>
+</html>
